@@ -1,103 +1,35 @@
-PouchDB Plugin Seed
+Couchbase Sync Gateway plugin for PouchDB
 =====
 
 [![Build Status](https://travis-ci.org/pouchdb/plugin-seed.svg)](https://travis-ci.org/pouchdb/plugin-seed)
 
-Fork this project to build your first PouchDB plugin.  It contains everything you need to test in Node, WebSQL, and IndexedDB.  It also includes a Travis config file so you
-can automatically run the tests in Travis.
+This PouchDB plugin aims at improving the performance of synchronization with Couchbase Sync Gateway.
+**It is still in an early stage of development, use it at own risk!**
 
-Building
+What does this plugin do?
 ----
-    npm install
-    npm run build
+Mainly it tries to minimize the number of requests to the Couchbase Sync Gateway.
+It
+- optimizes the two-way sync to CSG: the standard PouchDB two-way synchronization isn't but two one-way replications that don't interact with each other. This leads to unnecessary \_revs_diff requests that this plugin avoids.
+- provides a hook for enabling multipart responses when used inside an embedded browser view (for example PhoneGap / Cordova): CSG's \_bulk_get endpoint always answers in multipart/mixed mode. As this is not well supported by the browsers, PouchDB falls back to one request per document, which can be very efficient. If your pouch instance run in an environment where you have access to a method to perform HTTP calls that supports multipart/mixed, this plugin provides a hook for using it for \_bulk_get. See below for usage.
+- includes a dirty fix for a PouchDB bug (https://github.com/pouchdb/pouchdb/issues/5793)
+- Hopefully soon: Implements an optimized method for saving synchronization checkpoints.
 
-Your plugin is now located at `dist/pouchdb.mypluginname.js` and `dist/pouchdb.mypluginname.min.js` and is ready for distribution.
-
-Getting Started
--------
-
-**First**, change the `name` in `package.json` to whatever you want to call your plugin.  Change the `build` script so that it writes to the desired filename (e.g. `pouchdb.mypluginname.js`).  Also, change the authors, description, git repo, etc.
-
-**Next**, modify the `index.js` to do whatever you want your plugin to do.  Right now it just adds a `pouch.sayHello()` function that says hello:
-
-```js
-exports.sayHello = utils.toPromise(function (callback) {
-  callback(null, 'hello');
-});
-```
-
-**Optionally**, you can add some tests in `tests/test.js`. These tests will be run both in the local database and a remote CouchDB, which is expected to be running at localhost:5984 in "Admin party" mode.
-
-The sample test is:
-
-```js
-
-it('should say hello', function () {
-  return db.sayHello().then(function (response) {
-    response.should.equal('hello');
-  });
-});
-```
-
-Testing
+Usage
 ----
 
-### In Node
+    import PouchDBCSG from 'pouchdb-csg';
+    import {multipartProvider} from './multipart';
 
-This will run the tests in Node using LevelDB:
+    PouchDB.plugin(PouchDBCSG({
+      multipartProvider: multipartProvider // this is optional
+    }));
 
-    npm test
+The multipartProvider is optional; it has to be a function that performs an HTTP call:
+
+    function multipartProvider(method, url, headers, body) {
+      return do_http_call(method, url, headers, body); // has to return a promise
+    }
+
+It has to perform a request, parse the multipart/mixed content and return a list of the contained JSON objects.
     
-You can also check for 100% code coverage using:
-
-    npm run coverage
-
-If you don't like the coverage results, change the values from 100 to something else in `package.json`, or add `/*istanbul ignore */` comments.
-
-
-If you have mocha installed globally you can run single test with:
-```
-TEST_DB=local mocha --reporter spec --grep search_phrase
-```
-
-The `TEST_DB` environment variable specifies the database that PouchDB should use (see `package.json`).
-
-### In the browser
-
-Run `npm run dev` and then point your favorite browser to [http://127.0.0.1:8001/test/index.html](http://127.0.0.1:8001/test/index.html).
-
-The query param `?grep=mysearch` will search for tests matching `mysearch`.
-
-### Automated browser tests
-
-You can run e.g.
-
-    CLIENT=selenium:firefox npm test
-    CLIENT=selenium:phantomjs npm test
-
-This will run the tests automatically and the process will exit with a 0 or a 1 when it's done. Firefox uses IndexedDB, and PhantomJS uses WebSQL.
-
-What to tell your users
---------
-
-Below is some boilerplate you can use for when you want a real README for your users.
-
-To use this plugin, include it after `pouchdb.js` in your HTML page:
-
-```html
-<script src="pouchdb.js"></script>
-<script src="pouchdb.mypluginname.js"></script>
-```
-
-Or to use it in Node.js, just npm install it:
-
-```
-npm install pouchdb-myplugin
-```
-
-And then attach it to the `PouchDB` object:
-
-```js
-var PouchDB = require('pouchdb');
-PouchDB.plugin(require('pouchdb-myplugin'));
-```
