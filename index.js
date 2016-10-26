@@ -1,17 +1,7 @@
 'use strict';
 
-var utils = require('pouchdb-utils');
-
-exports.sayHello = utils.toPromise(function (callback) {
-  //
-  // You can use the following code to
-  // get the pouch or PouchDB objects
-  //
-  // var pouch = this;
-  // var PouchDB = pouch.constructor;
-
-  callback(null, 'hello');
-});
+var plugin = require('./src/index');
+module.exports = plugin;
 
 /* istanbul ignore next */
 if (typeof window !== 'undefined' && window.PouchDB) {

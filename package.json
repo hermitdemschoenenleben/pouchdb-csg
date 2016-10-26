@@ -1,24 +1,25 @@
 {
-  "name": "pouchdb-plugin-seed",
+  "name": "pouchdb-csg",
   "version": "0.1.0",
-  "description": "PouchDB Plugin Seed project",
+  "description": "Improve couchbase sync gateway compatibility for pouchdb",
   "main": "index.js",
   "repository": {
     "type": "git",
-    "url": "git://github.com/pouchdb/plugin-seed.git"
+    "url": "git://github.com/hermitdemschoenenleben/pouchdb-csg.git"
   },
   "keywords": [
     "pouch",
     "pouchdb",
     "plugin",
-    "seed",
-    "couch",
-    "couchdb"
+    "couchbase",
+    "couchbase sync gateway",
+    "csg",
+    "sync gateway"
   ],
-  "author": "",
+  "author": "Benjamin Wiegand",
   "license": "Apache",
   "bugs": {
-    "url": "https://github.com/pouchdb/plugin-seed/issues"
+    "url": "https://github.com/hermitdemschoenenleben/pouchdb-csg/issues"
   },
   "scripts": {
     "test-node": "TEST_DB=testdb,http://localhost:5984/testdb istanbul test ./node_modules/mocha/bin/_mocha test/test.js",
