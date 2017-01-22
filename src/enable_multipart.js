@@ -26,29 +26,29 @@ function docsToBulkGetOutput(docs) {
 
 export function enableMultipart(PouchDB, provider) {
   function transform(oldAdapter) {
-    async function sendBulkGet(native, body) {
+    function sendBulkGet(native, body) {
       this.body = body;
-      try {
-        let result = await provider(this.method, this.url, this.headers, this.body);
+      provider(this.method, this.url, this.headers, this.body)
+        .then(result => {
+          // HACK: don't know why this is necessary, probably a ts-js thing that
+          // throwing error directly does not work
+          if ((typeof result == 'string') && (result.startsWith('ERROR:'))) {
+            throw result;
+          }
 
-        // HACK: don't know why this is necessary, probably a ts-js thing that
-        // throwing error directly does not work
-        if ((typeof result == 'string') && (result.startsWith('ERROR:'))) {
-          throw result;
-        }
-
-        if (result.data) {
-          result.data = docsToBulkGetOutput(result.data);
-          this.success(result);
-        } else {
-          this.error(result);
-        }
-      } catch(e) {
+          if (result.data) {
+            result.data = docsToBulkGetOutput(result.data);
+            this.success(result);
+          } else {
+            this.error(result);
+          }
+        })
+      .catch(e => {
         this.error({
           error: 'error at multipart provider',
           status: 500
         });
-      }
+      })
     }
 
     var newAdapter = function() {
