@@ -1152,9 +1152,9 @@ function HttpPouch(opts, callback) {
             if (opts.include_docs && opts.attachments && opts.binary) {
               readAttachmentsAsBlobOrBuffer(c);
             }
-            if (returnDocs) {
+            /*if (returnDocs) {
               results.results.push(c);
-            }
+            }*/
             opts.onChange(c);
           }
           return ret;
