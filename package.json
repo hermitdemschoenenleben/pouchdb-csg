@@ -23,6 +23,7 @@
   },
   "scripts": {},
   "dependencies": {
+    "pouchdb-ajax": "^6.3.4",
     "pouchdb-utils": "5.4.0"
   },
   "devDependencies": {
