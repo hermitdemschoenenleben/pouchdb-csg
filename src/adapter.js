@@ -1111,9 +1111,8 @@ function HttpPouch(opts, callback) {
           conn.onclose = handle_error;
 
           self.socket_interval = window.setInterval(() => {
-            if (opts.aborted) {
-              return close_ws();
-            }
+            if (opts.aborted) return close_ws();
+            if (!self.socket_batch) return;
             let batch = self.socket_batch.splice(0, batchSize);
             if (batch.length > 0) {
               var res = {
