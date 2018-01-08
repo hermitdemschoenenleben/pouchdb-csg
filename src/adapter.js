@@ -45,7 +45,8 @@ var DEFAULT_HEARTBEAT = 10000;
 var supportsBulkGetMap = {};
 
 function readAttachmentsAsBlobOrBuffer(row) {
-  var atts = row.doc && row.doc._attachments;
+  var doc = row.doc || row.ok;
+  var atts = doc._attachments;
   if (!atts) {
     return;
   }
@@ -178,7 +179,7 @@ function HttpPouch(opts, callback) {
   api._ajax = ajaxCore;
 
   function ajax(userOpts, options, callback) {
-    var reqAjax = userOpts.ajax || {};
+    var reqAjax = (userOpts || {}).ajax || {};
     var reqOpts = Object.assign(clone(ajaxOpts), reqAjax, options);
     var defaultHeaders = clone(ajaxOpts.headers || {});
     reqOpts.headers = Object.assign(defaultHeaders, reqAjax.headers,
@@ -380,7 +381,7 @@ function HttpPouch(opts, callback) {
       }
 
       for (var i = 0; i < numBatches; i++) {
-        var subOpts = pick(opts, ['revs', 'attachments', 'latest']);
+        var subOpts = pick(opts, ['revs', 'attachments', 'binary', 'latest']);
         subOpts.ajax = ajaxOpts;
         subOpts.docs = opts.docs.slice(i * batchSize,
           Math.min(opts.docs.length, (i + 1) * batchSize));
@@ -476,6 +477,11 @@ function HttpPouch(opts, callback) {
       params.conflicts = opts.conflicts;
     }
 
+    /* istanbul ignore if */
+    if (opts.update_seq) {
+      params.update_seq = opts.update_seq;
+    }
+
     id = encodeDocId(id);
 
     // Set the options for the ajax call
@@ -547,7 +553,7 @@ function HttpPouch(opts, callback) {
         callback(null, res);
       });
     }).catch(function (e) {
-      e.requestedDocId = id;
+      e.docId = id;
       callback(e);
     });
   });
@@ -707,6 +713,7 @@ function HttpPouch(opts, callback) {
         body: doc
       }, function (err, result) {
         if (err) {
+          err.docId = doc && doc._id;
           return callback(err);
         }
         callback(null, result);
@@ -731,6 +738,11 @@ function HttpPouch(opts, callback) {
 
     if (opts.conflicts) {
       params.conflicts = true;
+    }
+
+    /* istanbul ignore if */
+    if (opts.update_seq) {
+      params.update_seq = true;
     }
 
     if (opts.descending) {
@@ -798,6 +810,9 @@ function HttpPouch(opts, callback) {
     }).catch(callback);
   });
 
+  // Get a list of changes made to documents in the database given by host.
+  // TODO According to the README, there should be two other methods here,
+  // api.changes.addListener and api.changes.removeListener.
   api._changes = function (opts) {
 
     // We internally page the results of a changes request, this means
@@ -871,12 +886,21 @@ function HttpPouch(opts, callback) {
       params.feed = 'longpoll';
     }
 
+    if (opts.seq_interval) {
+      params.seq_interval = opts.seq_interval;
+    }
+
     if (opts.conflicts) {
       params.conflicts = true;
     }
 
     if (opts.descending) {
       params.descending = true;
+    }
+
+    /* istanbul ignore if */
+    if (opts.update_seq) {
+      params.update_seq = true;
     }
 
     if ('heartbeat' in opts) {
@@ -983,6 +1007,16 @@ function HttpPouch(opts, callback) {
       if (res && res.results) {
         raw_results_length = res.results.length;
         results.last_seq = res.last_seq;
+        var pending = null;
+        var lastSeq = null;
+        // Attach 'pending' property if server supports it (CouchDB 2.0+)
+        /* istanbul ignore if */
+        if (typeof res.pending === 'number') {
+          pending = res.pending;
+        }
+        if (typeof results.last_seq === 'string' || typeof results.last_seq === 'number') {
+          lastSeq = results.last_seq;
+        }
         // For each change
         var req = {};
         req.query = opts.query_params;
@@ -996,7 +1030,7 @@ function HttpPouch(opts, callback) {
             if (returnDocs) {
               results.results.push(c);
             }
-            opts.onChange(c);
+            opts.onChange(c, pending, lastSeq);
           }
           return ret;
         });
@@ -1039,7 +1073,6 @@ function HttpPouch(opts, callback) {
       }
     };
   };
-
 
   /*
   CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE
@@ -1113,6 +1146,7 @@ function HttpPouch(opts, callback) {
           self.socket_interval = window.setInterval(() => {
             if (opts.aborted) return close_ws();
             if (!self.socket_batch) return;
+
             let batch = self.socket_batch.splice(0, batchSize);
             if (batch.length > 0) {
               var res = {
@@ -1220,7 +1254,6 @@ function HttpPouch(opts, callback) {
 HttpPouch.valid = function () {
   return true;
 };
-
 
 /*
 CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE
