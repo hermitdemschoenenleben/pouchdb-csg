@@ -40,11 +40,17 @@ function proxyMethod(methodName) {
 function proxyProperty(_this, propertyName, writable=undefined) {
   var descriptor = {
     configurable: true,
-    get: () => _apply(_this, xhr => xhr[propertyName])
+    get: function() {
+      return _apply(_this, function(xhr) {
+        return xhr[propertyName]
+      });
+    }
   };
   if (writable) {
-    descriptor.set = (val) => {
-      _apply(_this, xhr => xhr[propertyName] = val);
+    descriptor.set = function(val) {
+      return _apply(_this, function(xhr) {
+        xhr[propertyName] = val
+      });
     }
   }
   Object.defineProperty(_this, propertyName, descriptor);
@@ -54,8 +60,16 @@ function proxyEventProperty(_this, eventName) {
   var eventPropertyName = "on" + eventName.toLowerCase();
   var descriptor = {
     configurable: true,
-    get: () => _apply(_this, xhr => xhr[eventPropertyName]),
-    set: handler => _apply(_this, xhr => xhr[eventPropertyName] = handler)
+    get: function() {
+      return _apply(_this, function(xhr) {
+        return xhr[eventPropertyName]
+      })
+    },
+    set: function(handler) {
+      return _apply(_this, function(xhr) {
+        xhr[eventPropertyName] = handler;
+      })
+    }
   };
   Object.defineProperty(_this, eventPropertyName, descriptor);
 }
@@ -137,16 +151,16 @@ export function getXHR(overrides={}, use_native) {
     this._proxy = new ProxyXHR();
 
     /* Proxy events */
-    EVENTS.forEach((elem) => {
-      proxyEventProperty(this, elem);
+    EVENTS.forEach(function(elem) {
+      return proxyEventProperty(this, elem);
     });
     /* Proxy read/write properties */
-    RW_PROPERTIES.forEach((elem) => {
-      proxyProperty(this, elem, true);
+    RW_PROPERTIES.forEach(function(elem) {
+      return proxyProperty(this, elem, true);
     });
     /* Proxy read-only properties */
-    R_PROPERTIES.forEach((elem) => {
-      proxyProperty(this, elem);
+    R_PROPERTIES.forEach(function(elem) {
+      return proxyProperty(this, elem);
     });
   }
 

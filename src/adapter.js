@@ -329,7 +329,7 @@ function HttpPouch(opts, callback) {
       function sendBulkGet(native, body) {
         this.body = body;
         multipartProvider(this.method, this.url, this.headers, this.body)
-          .then(result => {
+          .then(function(result) {
             // this is a hack and I don't know why this is necessary,
             // probably a ts-js thing that throwing error directly does not work
             if ((typeof result == 'string') && (result.startsWith('ERROR:'))) {
@@ -338,13 +338,13 @@ function HttpPouch(opts, callback) {
 
             if (result.data) {
               result.data = docsToBulkGetOutput(result.data);
-              this.success(result);
+              self.success(result);
             } else {
-              this.error(result);
+              self.error(result);
             }
           })
-        .catch(e => {
-          this.error({
+        .catch(function(e) {
+          self.error({
             error: 'error at multipart provider',
             status: 500
           });
@@ -1121,7 +1121,7 @@ function HttpPouch(opts, callback) {
             }
             conn.send(JSON.stringify(data));
           };
-          conn.onmessage = (msg) => {
+          conn.onmessage = function(msg) {
             if (!self.socket_batch) { self.socket_batch = []; };
             var data;
             try {
@@ -1143,7 +1143,7 @@ function HttpPouch(opts, callback) {
           conn.onerror = handle_error;
           conn.onclose = handle_error;
 
-          self.socket_interval = window.setInterval(() => {
+          self.socket_interval = window.setInterval(function() {
             if (opts.aborted) return close_ws();
             if (!self.socket_batch) return;
 
