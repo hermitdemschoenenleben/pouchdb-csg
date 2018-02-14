@@ -1136,7 +1136,7 @@ function HttpPouch(opts, callback) {
             self.socket_batch = self.socket_batch.concat(data);
           }
 
-          function handle_error(err) {
+          var handle_error = function(err) {
             close_ws();
             callback(err, null);
           }
