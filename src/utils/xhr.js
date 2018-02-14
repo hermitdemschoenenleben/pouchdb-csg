@@ -88,7 +88,7 @@ class ProxyXHR {
     this.raw_data = undefined;
     this.responseText = undefined;
 
-    for (let event of EVENTS) {
+    for (var event of EVENTS) {
       this.listeners[event] = [];
       this['on' + event] = function() {}
     }
@@ -116,7 +116,7 @@ class ProxyXHR {
   }
 
   _callListeners(event) {
-    for (let listener of this.listeners[event]) {
+    for (var listener of this.listeners[event]) {
       listener();
     }
   }
@@ -143,7 +143,7 @@ class ProxyXHR {
 
 
 export function getXHR(overrides={}, use_native) {
-  let wrapper = function() {
+  var wrapper = function() {
     this._use_native = use_native;
     if (use_native) {
       this._native = new XMLHttpRequest();
@@ -165,7 +165,7 @@ export function getXHR(overrides={}, use_native) {
   }
 
   /* Proxy methods */
-  for (let method of METHODS) {
+  for (var method of METHODS) {
     if (!(method in overrides)) {
       wrapper.prototype[method] = proxyMethod(method);
     } else {

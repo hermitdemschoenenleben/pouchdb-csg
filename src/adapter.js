@@ -1113,7 +1113,7 @@ function HttpPouch(opts, callback) {
           self.socket = conn;
 
           conn.onopen = function() {
-            let data = {
+            var data = {
               since: since
             };
             if (opts.style) {
@@ -1147,7 +1147,7 @@ function HttpPouch(opts, callback) {
             if (opts.aborted) return close_ws();
             if (!self.socket_batch) return;
 
-            let batch = self.socket_batch.splice(0, batchSize);
+            var batch = self.socket_batch.splice(0, batchSize);
             if (batch.length > 0) {
               var res = {
                 results: batch,
