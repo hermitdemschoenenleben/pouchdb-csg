@@ -75,54 +75,52 @@ function proxyEventProperty(_this, eventName) {
   Object.defineProperty(_this, eventPropertyName, descriptor);
 }
 
-class ProxyXHR {
-  constructor() {
-    this.url = undefined; // string;
-    this.method = undefined // string;
-    this.headers = {};
-    this.onload = function() {};
-    this.onerror = function() {};
-    this.onreadystatechange = function() {};
-    this.readyState = XMLHttpRequest.UNSENT;
-    this.status = 0;
-    this.listeners = {};
-    this.raw_data = undefined;
-    this.responseText = undefined;
+var ProxyXHR = function() {
+  this.url = undefined; // string;
+  this.method = undefined // string;
+  this.headers = {};
+  this.onload = function() {};
+  this.onerror = function() {};
+  this.onreadystatechange = function() {};
+  this.readyState = XMLHttpRequest.UNSENT;
+  this.status = 0;
+  this.listeners = {};
+  this.raw_data = undefined;
+  this.responseText = undefined;
 
-    for (var event of EVENTS) {
-      this.listeners[event] = [];
-      this['on' + event] = function() {}
-    }
+  for (var event of EVENTS) {
+    this.listeners[event] = [];
+    this['on' + event] = function() {}
   }
 
-  abort() {}
+  this.abort = function() {};
 
-  open(method, url) {
+  this.open = function(method, url) {
     this.method = method;
     this.url = url;
     this.setReadyState(XMLHttpRequest.OPENED);
-  }
+  };
 
-  addEventListener(eventName, handler) {
+  this.addEventListener = function(eventName, handler) {
     this.listeners[eventName].push(handler);
-  }
+  };
 
-  setReadyState(state) {
+  this.setReadyState = function(state) {
     this.readyState = state;
     this.onreadystatechange();
-  }
+  };
 
-  setRequestHeader(key, value) {
+  this.setRequestHeader = function(key, value) {
     this.headers[key] = value;
   }
 
-  _callListeners(event) {
+  this._callListeners = function(event) {
     for (var listener of this.listeners[event]) {
       listener();
     }
   }
 
-  success(data) {
+  this.success = function(data) {
     console.info('recieved xhr wrapper request', this);
     this.raw_data = data;
     this.status = data.status;
@@ -132,7 +130,7 @@ class ProxyXHR {
     this._callListeners('load');
   }
 
-  error(data) {
+  this.error = function(data) {
     this.status = data.status;
     this.responseText = data.error;
     this.setReadyState(XMLHttpRequest.DONE)
@@ -140,7 +138,6 @@ class ProxyXHR {
     this._callListeners('error');
   }
 }
-
 
 
 export function getXHR(overrides, use_native) {
