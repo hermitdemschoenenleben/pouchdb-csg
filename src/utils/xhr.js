@@ -14,7 +14,8 @@ export interface XHRData {
  }
 }*/
 
-export function setXHROption(options={}, xhr) {
+export function setXHROption(options, xhr) {
+  options = options || {};
   options.ajax = options.ajax || {};
   options.ajax.xhr = xhr;
   return options;
@@ -30,14 +31,14 @@ function _apply(wrapper, fct) {
 }
 
 function proxyMethod(methodName) {
-  return function(...args) {
+  return function() {
     return _apply(this, function(xhr) {
-      return xhr[methodName].bind(xhr)(...args);
+      return xhr[methodName].apply(xhr, Array.from(arguments));
     });
   }
 }
 
-function proxyProperty(_this, propertyName, writable=undefined) {
+function proxyProperty(_this, propertyName, writable) {
   var descriptor = {
     configurable: true,
     get: function() {
@@ -142,7 +143,8 @@ class ProxyXHR {
 
 
 
-export function getXHR(overrides={}, use_native) {
+export function getXHR(overrides, use_native) {
+  overrides = overrides || {};
   var wrapper = function() {
     this._use_native = use_native;
     if (use_native) {
@@ -169,8 +171,8 @@ export function getXHR(overrides={}, use_native) {
     if (!(method in overrides)) {
       wrapper.prototype[method] = proxyMethod(method);
     } else {
-      wrapper.prototype[method] = function(...args) {
-        return overrides[method].bind(this._proxy)(this._native, ...args);
+      wrapper.prototype[method] = function() {
+        return overrides[method].apply(this._proxy, [this._native].concat(Array.from(arguments)));
       }
     }
   };
