@@ -870,6 +870,20 @@ function HttpPouch(opts, callback) {
     //
     var leftToFetch = limit;
 
+    /*
+    CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE
+    */
+    // this allows to skip documents that are already deleted or removed
+    // from channels such they don't have to be replicated initially
+    // this is analogous to the behavior of CB Lite
+    if (true) {
+      console.info('fetching active_only documents')
+      params.active_only = true;
+    }
+    /*
+    END END END END END END END END END END END END END END END END END END END
+    */
+
     if (opts.style) {
       params.style = opts.style;
     }
@@ -1096,7 +1110,7 @@ function HttpPouch(opts, callback) {
 
     opts = clone(opts);
 
-    // Get all the changes starting wtih the one immediately after the
+    // Get all the changes starting with the one immediately after the
     // sequence number given by since.
     var fetch = function (since, callback) {
       if (opts.aborted) {
