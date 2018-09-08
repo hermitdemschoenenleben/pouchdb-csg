@@ -1,12 +1,20 @@
+'use strict';
+
 /*
 CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE
 */
 import {getXHR, setXHROption} from './utils/xhr';
 
-
-import { nextTick } from 'pouchdb-utils';
-import ajaxCore from 'pouchdb-ajax';
 import getArguments from 'argsarray';
+import pool from './promise-pool';
+
+import { fetch, Headers, AbortController } from 'pouchdb-fetch';
+
+import {
+  createError,
+  BAD_ARG,
+  generateErrorFromResponse
+} from 'pouchdb-errors';
 
 import {
   pick,
@@ -16,7 +24,8 @@ import {
   clone,
   parseUri,
   bulkGetShim,
-  flatten
+  flatten,
+  nextTick
 } from 'pouchdb-utils';
 
 import {
@@ -27,23 +36,21 @@ import {
   blobOrBufferToBase64 as blufferToBase64
 } from 'pouchdb-binary-utils';
 
-import pool from './promise-pool';
-import { createError, BAD_ARG } from 'pouchdb-errors';
-
 export default function CSGAdapter(multipartProvider) {
 
 
-// this allows to skip documents that are already deleted or removed
-// from channels such they don't have to be replicated initially
-// this is analogous to the behavior of CB Lite
-// in contrast to CB Lite, we also do it on continuous replication
-// the reason for this is that we want to be able to remove a document
-// (i.e. a message) from the user's channel, but keep it existent locally
-var ACTIVE_ONLY = true;
+  // this allows to skip documents that are already deleted or removed
+  // from channels such they don't have to be replicated initially
+  // this is analogous to the behavior of CB Lite
+  // in contrast to CB Lite, we also do it on continuous replication
+  // the reason for this is that we want to be able to remove a document
+  // (i.e. a message) from the user's channel, but keep it existent locally
+  var ACTIVE_ONLY = true;
 
-/*
-END END END END END END END END END END END END END END END END END END END END
-*/
+  /*
+  END END END END END END END END END END END END END END END END END END END END
+  */
+
 
 var CHANGES_BATCH_SIZE = 25;
 var MAX_SIMULTANEOUS_REVS = 50;
@@ -54,7 +61,7 @@ var supportsBulkGetMap = {};
 
 function readAttachmentsAsBlobOrBuffer(row) {
   var doc = row.doc || row.ok;
-  var atts = doc._attachments;
+  var atts = doc && doc._attachments;
   if (!atts) {
     return;
   }
@@ -95,26 +102,22 @@ function hasUrlPrefix(opts) {
   if (!opts.prefix) {
     return false;
   }
-
   var protocol = parseUri(opts.prefix).protocol;
-
   return protocol === 'http' || protocol === 'https';
 }
 
 // Get all the information you possibly can about the URI given by name and
 // return it as a suitable object.
 function getHost(name, opts) {
-
   // encode db name if opts.prefix is a url (#5574)
   if (hasUrlPrefix(opts)) {
     var dbName = opts.name.substr(opts.prefix.length);
-    name = opts.prefix + encodeURIComponent(dbName);
+    // Ensure prefix has a trailing slash
+    var prefix = opts.prefix.replace(/\/?$/, '/');
+    name = prefix + encodeURIComponent(dbName);
   }
 
-  // Prase the URI into all its little bits
   var uri = parseUri(name);
-
-  // Store the user and password as a separate auth object
   if (uri.user || uri.password) {
     uri.auth = {username: uri.user, password: uri.password};
   }
@@ -123,16 +126,12 @@ function getHost(name, opts) {
   // after removing any leading '/' and any trailing '/'
   var parts = uri.path.replace(/(^\/|\/$)/g, '').split('/');
 
-  // Store the first part as the database name and remove it from the parts
-  // array
   uri.db = parts.pop();
   // Prevent double encoding of URI component
   if (uri.db.indexOf('%') === -1) {
     uri.db = encodeURIComponent(uri.db);
   }
 
-  // Restore the path by joining all the remaining parts (all the parts
-  // except for the database name) with '/'s
   uri.path = parts.join('/');
 
   return uri;
@@ -162,8 +161,62 @@ function paramsToStr(params) {
   }).join('&');
 }
 
+function shouldCacheBust(opts) {
+  var ua = (typeof navigator !== 'undefined' && navigator.userAgent) ?
+      navigator.userAgent.toLowerCase() : '';
+  var isIE = ua.indexOf('msie') !== -1;
+  var isTrident = ua.indexOf('trident') !== -1;
+  var isEdge = ua.indexOf('edge') !== -1;
+  var isGET = !('method' in opts) || opts.method === 'GET';
+  return (isIE || isTrident || isEdge) && isGET;
+}
+
 // Implements the PouchDB API for dealing with CouchDB instances over HTTP
 function HttpPouch(opts, callback) {
+  /*
+  CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE
+  */
+  var originalFetch = (opts || {}).fetch;
+
+  opts = Object.assign({}, opts || {}, {
+    fetch: function (url, opts) {
+      var fallback = function() {
+        opts.fetch = originalFetch;
+        return PouchDB.fetch(url, opts);
+      };
+
+      if (url.indexOf('/_bulk_get?') === -1) {
+        // not a bulk get request
+        return fallback();
+      }
+
+      console.debug('Fetch Bulk Get?!', url, opts);
+      return new Promise(function(resolve, reject) {
+        multipartProvider(
+          opts.method,
+          url,
+          opts.headers,
+          opts.body
+        ).then(function(result) {
+          console.debug('result', result);
+          // FIXME: transformation missing
+          console.error('ignoring multipart result, transformation missing!');
+          return fallback();
+        }).catch(function(e) {
+          console.debug('error at multipart', e);
+          return fallback();
+        }).catch(function(err) {
+          console.debug('err', err);
+          reject(err);
+        }).then(function(result) {
+          resolve(result);
+        });
+      });
+    },
+  });
+  /*
+  END END END END END END END END END END END END END END END END END END
+  */
 
   // The functions that will be publicly available for HttpPouch
   var api = this;
@@ -172,44 +225,34 @@ function HttpPouch(opts, callback) {
   var dbUrl = genDBUrl(host, '');
 
   opts = clone(opts);
-  var ajaxOpts = opts.ajax || {};
 
-  if (opts.auth || host.auth) {
-    var nAuth = opts.auth || host.auth;
-    var str = nAuth.username + ':' + nAuth.password;
-    var token = btoa(unescape(encodeURIComponent(str)));
-    ajaxOpts.headers = ajaxOpts.headers || {};
-    ajaxOpts.headers.Authorization = 'Basic ' + token;
-  }
+  var ourFetch = function (url, options) {
 
-  // Not strictly necessary, but we do this because numerous tests
-  // rely on swapping ajax in and out.
-  api._ajax = ajaxCore;
+    options = options || {};
+    options.headers = options.headers || new Headers();
 
-  function ajax(userOpts, options, callback) {
-    var reqAjax = (userOpts || {}).ajax || {};
-    var reqOpts = Object.assign(clone(ajaxOpts), reqAjax, options);
-    var defaultHeaders = clone(ajaxOpts.headers || {});
-    reqOpts.headers = Object.assign(defaultHeaders, reqAjax.headers,
-      options.headers || {});
-    /* istanbul ignore if */
-    if (api.constructor.listeners('debug').length) {
-      api.constructor.emit('debug', ['http', reqOpts.method, reqOpts.url]);
+    options.credentials = 'include';
+
+    if (opts.auth || host.auth) {
+      var nAuth = opts.auth || host.auth;
+      var str = nAuth.username + ':' + nAuth.password;
+      var token = btoa(unescape(encodeURIComponent(str)));
+      options.headers.set('Authorization', 'Basic ' + token);
     }
-    return api._ajax(reqOpts, callback);
-  }
 
-  function ajaxPromise(userOpts, opts) {
-    return new Promise(function (resolve, reject) {
-      ajax(userOpts, opts, function (err, res) {
-        /* istanbul ignore if */
-        if (err) {
-          return reject(err);
-        }
-        resolve(res);
-      });
+    var headers = opts.headers || {};
+    Object.keys(headers).forEach(function (key) {
+      options.headers.append(key, headers[key]);
     });
-  }
+
+    /* istanbul ignore if */
+    if (shouldCacheBust(options)) {
+      url += (url.indexOf('?') === -1 ? '?' : '&') + '_nonce=' + Date.now();
+    }
+
+    var fetchFun = opts.fetch || fetch;
+    return fetchFun(url, options);
+  };
 
   function adapterFun(name, fun) {
     return coreAdapterFun(name, getArguments(function (args) {
@@ -219,14 +262,61 @@ function HttpPouch(opts, callback) {
         var callback = args.pop();
         callback(e);
       });
-    }));
+    })).bind(api);
+  }
+
+  function fetchJSON(url, options, callback) {
+
+    var result = {};
+
+    options = options || {};
+    options.headers = options.headers || new Headers();
+
+    if (!options.headers.get('Content-Type')) {
+      options.headers.set('Content-Type', 'application/json');
+    }
+    if (!options.headers.get('Accept')) {
+      options.headers.set('Accept', 'application/json');
+    }
+
+    return ourFetch(url, options).then(function (response) {
+      result.ok = response.ok;
+      result.status = response.status;
+      return response.json();
+    }).then(function (json) {
+      result.data = json;
+      if (!result.ok) {
+        result.data.status = result.status;
+        var err = generateErrorFromResponse(result.data);
+        if (callback) {
+          return callback(err);
+        } else {
+          throw err;
+        }
+      }
+
+      if (Array.isArray(result.data)) {
+        result.data = result.data.map(function (v) {
+          if (v.error || v.missing) {
+            return generateErrorFromResponse(v);
+          } else {
+            return v;
+          }
+        });
+      }
+
+      if (callback) {
+        callback(null, result.data);
+      } else {
+        return result;
+      }
+    });
   }
 
   var setupPromise;
 
   function setup() {
-    // TODO: Remove `skipSetup` in favor of `skip_setup` in a future release
-    if (opts.skipSetup || opts.skip_setup) {
+    if (opts.skip_setup) {
       return Promise.resolve();
     }
 
@@ -237,12 +327,11 @@ function HttpPouch(opts, callback) {
       return setupPromise;
     }
 
-    var checkExists = {method: 'GET', url: dbUrl};
-    setupPromise = ajaxPromise({}, checkExists).catch(function (err) {
+    setupPromise = fetchJSON(dbUrl).catch(function (err) {
       if (err && err.status && err.status === 404) {
         // Doesnt exist, create it
         explainError(404, 'PouchDB is just detecting if the remote exists.');
-        return ajaxPromise({}, {method: 'PUT', url: dbUrl});
+        return fetchJSON(dbUrl, {method: 'PUT'});
       } else {
         return Promise.reject(err);
       }
@@ -268,22 +357,22 @@ function HttpPouch(opts, callback) {
   });
 
   api._remote = true;
+
   /* istanbul ignore next */
   api.type = function () {
     return 'http';
   };
 
   api.id = adapterFun('id', function (callback) {
-    ajax({}, {method: 'GET', url: genUrl(host, '')}, function (err, result) {
+    ourFetch(genUrl(host, '')).then(function (response) {
+      return response.json();
+    }).then(function (result) {
       var uuid = (result && result.uuid) ?
-        (result.uuid + host.db) : genDBUrl(host, '');
+          (result.uuid + host.db) : genDBUrl(host, '');
       callback(null, uuid);
+    }).catch(function (err) {
+      callback(err);
     });
-  });
-
-  api.request = adapterFun('request', function (options, callback) {
-    options.url = genDBUrl(host, options.url);
-    ajax({}, options, callback);
   });
 
   // Sends a POST request to the host calling the couchdb _compact function
@@ -294,10 +383,8 @@ function HttpPouch(opts, callback) {
       opts = {};
     }
     opts = clone(opts);
-    ajax(opts, {
-      url: genDBUrl(host, '_compact'),
-      method: 'POST'
-    }, function () {
+
+    fetchJSON(genDBUrl(host, '_compact'), {method: 'POST'}).then(function () {
       function ping() {
         api.info(function (err, res) {
           // CouchDB may send a "compact_running:true" if it's
@@ -331,43 +418,17 @@ function HttpPouch(opts, callback) {
         params.latest = true;
       }
 
-      /*
-      CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE
-      */
-      function sendBulkGet(native, body) {
-        this.body = body;
-        multipartProvider(this.method, this.url, this.headers, this.body)
-          .then(function(result) {
-            // this is a hack and I don't know why this is necessary,
-            // probably a ts-js thing that throwing error directly does not work
-            if ((typeof result == 'string') && (result.startsWith('ERROR:'))) {
-              throw result;
-            }
-
-            if (result.data) {
-              result.data = docsToBulkGetOutput(result.data);
-              self.success(result);
-            } else {
-              self.error(result);
-            }
-          })
-        .catch(function(e) {
-          self.error({
-            error: 'error at multipart provider',
-            status: 500
-          });
-        })
-      }
-      var opts2 = {
-        url: genDBUrl(host, '_bulk_get' + paramsToStr(params)),
+      fetchJSON(genDBUrl(host, '_bulk_get' + paramsToStr(params)), {
         method: 'POST',
-        body: { docs: opts.docs}
-      };
-      opts2 = setXHROption(opts2 || {}, getXHR({send: sendBulkGet}, false));
-      ajax(opts, opts2, cb);
-      /*
-      END END END END END END END END END END END END END END END END END END
-      */
+        body: JSON.stringify({ docs: opts.docs})
+      }).then(function (result) {
+        if (opts.attachments && opts.binary) {
+          result.data.results.forEach(function (res) {
+            res.docs.forEach(readAttachmentsAsBlobOrBuffer);
+          });
+        }
+        cb(null, result.data);
+      }).catch(cb);
     }
 
     /* istanbul ignore next */
@@ -390,7 +451,6 @@ function HttpPouch(opts, callback) {
 
       for (var i = 0; i < numBatches; i++) {
         var subOpts = pick(opts, ['revs', 'attachments', 'binary', 'latest']);
-        subOpts.ajax = ajaxOpts;
         subOpts.docs = opts.docs.slice(i * batchSize,
           Math.min(opts.docs.length, (i + 1) * batchSize));
         bulkGetShim(self, subOpts, onResult(i));
@@ -430,18 +490,19 @@ function HttpPouch(opts, callback) {
   //    version: The version of CouchDB it is running
   api._info = function (callback) {
     setup().then(function () {
-      ajax({}, {
-        method: 'GET',
-        url: genDBUrl(host, '')
-      }, function (err, res) {
-        /* istanbul ignore next */
-        if (err) {
-        return callback(err);
-        }
-        res.host = genDBUrl(host, '');
-        callback(null, res);
-      });
+      return ourFetch(genDBUrl(host, ''));
+    }).then(function (response) {
+      return response.json();
+    }).then(function (info) {
+      info.host = genDBUrl(host, '');
+      callback(null, info);
     }).catch(callback);
+  };
+
+  api.fetch = function (path, options) {
+    return setup().then(function () {
+      return ourFetch(genDBUrl(host, path), options);
+    });
   };
 
   // Get the document with the given id from the database given by host.
@@ -492,12 +553,6 @@ function HttpPouch(opts, callback) {
 
     id = encodeDocId(id);
 
-    // Set the options for the ajax call
-    var options = {
-      method: 'GET',
-      url: genDBUrl(host, id + paramsToStr(params))
-    };
-
     function fetchAttachments(doc) {
       var atts = doc._attachments;
       var filenames = atts && Object.keys(atts);
@@ -508,16 +563,23 @@ function HttpPouch(opts, callback) {
       // Sync Gateway would normally send it back as multipart/mixed,
       // which we cannot parse. Also, this is more efficient than
       // receiving attachments as base64-encoded strings.
-      function fetch(filename) {
+      function fetchData(filename) {
         var att = atts[filename];
         var path = encodeDocId(doc._id) + '/' + encodeAttachmentId(filename) +
-          '?rev=' + doc._rev;
-        return ajaxPromise(opts, {
-          method: 'GET',
-          url: genDBUrl(host, path),
-          binary: true
+            '?rev=' + doc._rev;
+        return ourFetch(genDBUrl(host, path)).then(function (response) {
+          if (typeof process !== 'undefined' && !process.browser) {
+            return response.buffer();
+          } else {
+            /* istanbul ignore next */
+            return response.blob();
+          }
         }).then(function (blob) {
           if (opts.binary) {
+            // TODO: Can we remove this?
+            if (typeof process !== 'undefined' && !process.browser) {
+              blob.type = att.content_type;
+            }
             return blob;
           }
           return new Promise(function (resolve) {
@@ -532,7 +594,7 @@ function HttpPouch(opts, callback) {
 
       var promiseFactories = filenames.map(function (filename) {
         return function () {
-          return fetch(filename);
+          return fetchData(filename);
         };
       });
 
@@ -552,13 +614,14 @@ function HttpPouch(opts, callback) {
       return fetchAttachments(docOrDocs);
     }
 
-    ajaxPromise(opts, options).then(function (res) {
+    var url = genDBUrl(host, id + paramsToStr(params));
+    fetchJSON(url).then(function (res) {
       return Promise.resolve().then(function () {
         if (opts.attachments) {
-          return fetchAllAttachments(res);
+          return fetchAllAttachments(res.data);
         }
       }).then(function () {
-        callback(null, res);
+        callback(null, res.data);
       });
     }).catch(function (e) {
       e.docId = id;
@@ -566,9 +629,9 @@ function HttpPouch(opts, callback) {
     });
   });
 
+
   // Delete the document given by doc from the database given by host.
-  api.remove = adapterFun('remove',
-      function (docOrId, optsOrRev, opts, callback) {
+  api.remove = adapterFun('remove', function (docOrId, optsOrRev, opts, cb) {
     var doc;
     if (typeof optsOrRev === 'string') {
       // id, rev, opts, callback style
@@ -577,28 +640,25 @@ function HttpPouch(opts, callback) {
         _rev: optsOrRev
       };
       if (typeof opts === 'function') {
-        callback = opts;
+        cb = opts;
         opts = {};
       }
     } else {
       // doc, opts, callback style
       doc = docOrId;
       if (typeof optsOrRev === 'function') {
-        callback = optsOrRev;
+        cb = optsOrRev;
         opts = {};
       } else {
-        callback = opts;
+        cb = opts;
         opts = optsOrRev;
       }
     }
 
     var rev = (doc._rev || opts.rev);
+    var url = genDBUrl(host, encodeDocId(doc._id)) + '?rev=' + rev;
 
-    // Delete the document
-    ajax(opts, {
-      method: 'DELETE',
-      url: genDBUrl(host, encodeDocId(doc._id)) + '?rev=' + rev
-    }, callback);
+    fetchJSON(url, {method: 'DELETE'}, cb).catch(cb);
   });
 
   function encodeAttachmentId(attachmentId) {
@@ -606,43 +666,55 @@ function HttpPouch(opts, callback) {
   }
 
   // Get the attachment
-  api.getAttachment =
-    adapterFun('getAttachment', function (docId, attachmentId, opts,
-                                                callback) {
+  api.getAttachment = adapterFun('getAttachment', function (docId, attachmentId,
+                                                            opts, callback) {
     if (typeof opts === 'function') {
       callback = opts;
       opts = {};
     }
     var params = opts.rev ? ('?rev=' + opts.rev) : '';
     var url = genDBUrl(host, encodeDocId(docId)) + '/' +
-      encodeAttachmentId(attachmentId) + params;
-    ajax(opts, {
-      method: 'GET',
-      url: url,
-      binary: true
-    }, callback);
+        encodeAttachmentId(attachmentId) + params;
+    var contentType;
+    ourFetch(url, {method: 'GET'}).then(function (response) {
+      contentType = response.headers.get('content-type');
+      if (!response.ok) {
+        throw response;
+      } else {
+        if (typeof process !== 'undefined' && !process.browser) {
+          return response.buffer();
+        } else {
+          /* istanbul ignore next */
+          return response.blob();
+        }
+      }
+    }).then(function (blob) {
+      // TODO: also remove
+      if (typeof process !== 'undefined' && !process.browser) {
+        blob.type = contentType;
+      }
+      callback(null, blob);
+    }).catch(function (err) {
+      callback(err);
+    });
   });
 
   // Remove the attachment given by the id and rev
-  api.removeAttachment =
-    adapterFun('removeAttachment', function (docId, attachmentId, rev,
-                                                   callback) {
-
+  api.removeAttachment =  adapterFun('removeAttachment', function (docId,
+                                                                   attachmentId,
+                                                                   rev,
+                                                                   callback) {
     var url = genDBUrl(host, encodeDocId(docId) + '/' +
-      encodeAttachmentId(attachmentId)) + '?rev=' + rev;
-
-    ajax({}, {
-      method: 'DELETE',
-      url: url
-    }, callback);
+                       encodeAttachmentId(attachmentId)) + '?rev=' + rev;
+    fetchJSON(url, {method: 'DELETE'}, callback).catch(callback);
   });
 
   // Add the attachment given by blob and its contentType property
   // to the document with the given id, the revision given by rev, and
   // add it to the database given by host.
-  api.putAttachment =
-    adapterFun('putAttachment', function (docId, attachmentId, rev, blob,
-                                                type, callback) {
+  api.putAttachment = adapterFun('putAttachment', function (docId, attachmentId,
+                                                            rev, blob,
+                                                            type, callback) {
     if (typeof type === 'function') {
       callback = type;
       type = blob;
@@ -667,16 +739,12 @@ function HttpPouch(opts, callback) {
       blob = binary ? binStringToBluffer(binary, type) : '';
     }
 
-    var opts = {
-      headers: {'Content-Type': type},
-      method: 'PUT',
-      url: url,
-      processData: false,
-      body: blob,
-      timeout: ajaxOpts.timeout || 60000
-    };
     // Add the attachment
-    ajax({}, opts, callback);
+    fetchJSON(url, {
+      headers: new Headers({'Content-Type': type}),
+      method: 'PUT',
+      body: blob
+    }, callback).catch(callback);
   });
 
   // Update/create multiple documents given by req in the database
@@ -691,20 +759,10 @@ function HttpPouch(opts, callback) {
       return Promise.all(req.docs.map(preprocessAttachments));
     }).then(function () {
       // Update/create the documents
-      ajax(opts, {
+      return fetchJSON(genDBUrl(host, '_bulk_docs'), {
         method: 'POST',
-        url: genDBUrl(host, '_bulk_docs'),
-        timeout: opts.timeout,
-        body: req
-      }, function (err, results) {
-        if (err) {
-          return callback(err);
-        }
-        results.forEach(function (result) {
-          result.ok = true; // smooths out cloudant not adding this
-        });
-        callback(null, results);
-      });
+        body: JSON.stringify(req)
+      }, callback);
     }).catch(callback);
   };
 
@@ -714,19 +772,16 @@ function HttpPouch(opts, callback) {
     setup().then(function () {
       return preprocessAttachments(doc);
     }).then(function () {
-      // Update/create the document
-      ajax(opts, {
+      return fetchJSON(genDBUrl(host, encodeDocId(doc._id)), {
         method: 'PUT',
-        url: genDBUrl(host, encodeDocId(doc._id)),
-        body: doc
-      }, function (err, result) {
-        if (err) {
-          err.docId = doc && doc._id;
-          return callback(err);
-        }
-        callback(null, result);
+        body: JSON.stringify(doc)
       });
-    }).catch(callback);
+    }).then(function (result) {
+      callback(null, result.data);
+    }).catch(function (err) {
+      err.docId = doc && doc._id;
+      callback(err);
+    });
   };
 
 
@@ -805,16 +860,14 @@ function HttpPouch(opts, callback) {
       body = {keys: opts.keys};
     }
 
-    // Get the document listing
-    ajaxPromise(opts, {
-      method: method,
-      url: genDBUrl(host, '_all_docs' + paramStr),
-      body: body
-    }).then(function (res) {
+    fetchJSON(genDBUrl(host, '_all_docs' + paramStr), {
+       method: method,
+      body: JSON.stringify(body)
+    }).then(function (result) {
       if (opts.include_docs && opts.attachments && opts.binary) {
-        res.rows.forEach(readAttachmentsAsBlobOrBuffer);
+        result.data.rows.forEach(readAttachmentsAsBlobOrBuffer);
       }
-      callback(null, res);
+      callback(null, result.data);
     }).catch(callback);
   });
 
@@ -845,9 +898,7 @@ function HttpPouch(opts, callback) {
       opts.heartbeat = DEFAULT_HEARTBEAT;
     }
 
-    var requestTimeout = ('timeout' in opts) ? opts.timeout :
-      ('timeout' in ajaxOpts) ? ajaxOpts.timeout :
-      30 * 1000;
+    var requestTimeout = ('timeout' in opts) ? opts.timeout : 30 * 1000;
 
     // ensure CHANGES_TIMEOUT_BUFFER applies
     if ('timeout' in opts && opts.timeout &&
@@ -855,6 +906,7 @@ function HttpPouch(opts, callback) {
         requestTimeout = opts.timeout + CHANGES_TIMEOUT_BUFFER;
     }
 
+    /* istanbul ignore if */
     if ('heartbeat' in opts && opts.heartbeat &&
        (requestTimeout - opts.heartbeat) < CHANGES_TIMEOUT_BUFFER) {
         requestTimeout = opts.heartbeat + CHANGES_TIMEOUT_BUFFER;
@@ -866,16 +918,6 @@ function HttpPouch(opts, callback) {
     }
 
     var limit = (typeof opts.limit !== 'undefined') ? opts.limit : false;
-    var returnDocs;
-    if ('return_docs' in opts) {
-      returnDocs = opts.return_docs;
-    } else if ('returnDocs' in opts) {
-      // TODO: Remove 'returnDocs' in favor of 'return_docs' in a future release
-      returnDocs = opts.returnDocs;
-    } else {
-      returnDocs = true;
-    }
-    //
     var leftToFetch = limit;
 
     /*
@@ -970,17 +1012,17 @@ function HttpPouch(opts, callback) {
       body = {selector: opts.selector };
     }
 
-    var xhr;
+    var controller = new AbortController();
     var lastFetchedSeq;
 
     // Get all the changes starting wtih the one immediately after the
     // sequence number given by since.
-    var fetch = function (since, callback) {
+    var fetchData = function (since, callback) {
       if (opts.aborted) {
         return;
       }
       params.since = since;
-      // "since" can be any kind of json object in Coudant/CouchDB 2.x
+      // "since" can be any kind of json object in Cloudant/CouchDB 2.x
       /* istanbul ignore next */
       if (typeof params.since === "object") {
         params.since = JSON.stringify(params.since);
@@ -996,11 +1038,11 @@ function HttpPouch(opts, callback) {
       }
 
       // Set the options for the ajax call
-      var xhrOpts = {
+      var url = genDBUrl(host, '_changes' + paramsToStr(params));
+      var fetchOpts = {
+        signal: controller.signal,
         method: method,
-        url: genDBUrl(host, '_changes' + paramsToStr(params)),
-        timeout: requestTimeout,
-        body: body
+        body: JSON.stringify(body)
       };
       lastFetchedSeq = since;
 
@@ -1011,7 +1053,7 @@ function HttpPouch(opts, callback) {
 
       // Get the changes
       setup().then(function () {
-        xhr = ajax(opts, xhrOpts, callback);
+        return fetchJSON(url, fetchOpts, callback);
       }).catch(callback);
     };
 
@@ -1049,7 +1091,7 @@ function HttpPouch(opts, callback) {
             if (opts.include_docs && opts.attachments && opts.binary) {
               readAttachmentsAsBlobOrBuffer(c);
             }
-            if (returnDocs) {
+            if (opts.return_docs) {
               results.results.push(c);
             }
             opts.onChange(c, pending, lastSeq);
@@ -1076,22 +1118,20 @@ function HttpPouch(opts, callback) {
 
       if ((opts.continuous && !(limit && leftToFetch <= 0)) || !finished) {
         // Queue a call to fetch again with the newest sequence number
-        nextTick(function () { fetch(lastFetchedSeq, fetched); });
+        nextTick(function () { fetchData(lastFetchedSeq, fetched); });
       } else {
         // We're done, call the callback
         opts.complete(null, results);
       }
     };
 
-    fetch(opts.since || 0, fetched);
+    fetchData(opts.since || 0, fetched);
 
     // Return a method to cancel this method from processing any more
     return {
       cancel: function () {
         opts.aborted = true;
-        if (xhr) {
-          xhr.abort();
-        }
+        controller.abort();
       }
     };
   };
@@ -1099,148 +1139,148 @@ function HttpPouch(opts, callback) {
   /*
   CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE
   */
-  api._continuous_changes_over_websockets = function (opts) {
-    var self = this;
+ api._continuous_changes_over_websockets = function (opts) {
+  var self = this;
 
-    function close_ws() {
-      try {
-        self.socket.close()
-      } catch(e) {};
-      try {
-        window.clearInterval(self.socket_interval);
-        self.socket_interval = undefined;
-      } catch(e) {}
-      self.socket = undefined;
+  function close_ws() {
+    try {
+      self.socket.close()
+    } catch(e) {};
+    try {
+      window.clearInterval(self.socket_interval);
+      self.socket_interval = undefined;
+    } catch(e) {}
+    self.socket = undefined;
+  }
+
+  // TODO: BatchSize
+  var batchSize = 'batch_size' in opts ? opts.batch_size : CHANGES_BATCH_SIZE;
+
+  opts = clone(opts);
+
+  // Get all the changes starting with the one immediately after the
+  // sequence number given by since.
+  var fetch = function (since, callback) {
+    if (opts.aborted) {
+      return;
     }
 
-    // TODO: BatchSize
-    var batchSize = 'batch_size' in opts ? opts.batch_size : CHANGES_BATCH_SIZE;
+    try {
+      if (!self.socket) {
+        var url = genDBUrl(host, '_changes' + paramsToStr({
+          feed: 'websocket'
+        })).replace('http', 'ws');
 
-    opts = clone(opts);
+        var conn = new WebSocket(url);
+        self.socket = conn;
 
-    // Get all the changes starting with the one immediately after the
-    // sequence number given by since.
-    var fetch = function (since, callback) {
-      if (opts.aborted) {
-        return;
-      }
-
-      try {
-        if (!self.socket) {
-          var url = genDBUrl(host, '_changes' + paramsToStr({
-            feed: 'websocket'
-          })).replace('http', 'ws');
-
-          var conn = new WebSocket(url);
-          self.socket = conn;
-
-          conn.onopen = function() {
-            var data = {
-              since: since,
-            };
-
-            if (ACTIVE_ONLY) {
-              data.active_only = true
-            }
-
-            if (opts.style) {
-              data.style = opts.style;
-            }
-            conn.send(JSON.stringify(data));
+        conn.onopen = function() {
+          var data = {
+            since: since,
           };
-          conn.onmessage = function(msg) {
-            if (!self.socket_batch) { self.socket_batch = []; };
-            var data;
-            try {
-              data = JSON.parse(msg.data);
-            } catch(e) {
-              return;
-            }
-            if (data.length == 0) {
-              return;
-            }
 
-            self.socket_batch = self.socket_batch.concat(data);
+          if (ACTIVE_ONLY) {
+            data.active_only = true
           }
 
-          var handle_error = function(err) {
-            close_ws();
-            callback(err, null);
+          if (opts.style) {
+            data.style = opts.style;
           }
-          conn.onerror = handle_error;
-          conn.onclose = handle_error;
+          conn.send(JSON.stringify(data));
+        };
+        conn.onmessage = function(msg) {
+          if (!self.socket_batch) { self.socket_batch = []; };
+          var data;
+          try {
+            data = JSON.parse(msg.data);
+          } catch(e) {
+            return;
+          }
+          if (data.length == 0) {
+            return;
+          }
 
-          self.socket_interval = window.setInterval(function() {
-            if (opts.aborted) return close_ws();
-            if (!self.socket_batch) return;
-
-            var batch = self.socket_batch.splice(0, batchSize);
-            if (batch.length > 0) {
-              var res = {
-                results: batch,
-                last_seq: batch.slice(-1)[0].seq
-              };
-              callback(null, res);
-            }
-          }, 500);
+          self.socket_batch = self.socket_batch.concat(data);
         }
-      } catch(e) {
-        console.error('ERROR AT WEBSOCKET', e);
-      }
-    };
 
-    // If opts.since exists, get all the changes from the sequence
-    // number given by opts.since. Otherwise, get all the changes
-    // from the sequence number 0.
-    var results = {results: []};
+        var handle_error = function(err) {
+          close_ws();
+          callback(err, null);
+        }
+        conn.onerror = handle_error;
+        conn.onclose = handle_error;
 
-    var fetched = function (err, res) {
-      if (opts.aborted) {
-        return;
-      }
-      var raw_results_length = 0;
-      // If the result of the ajax call (res) contains changes (res.results)
-      if (res && res.results) {
-        raw_results_length = res.results.length;
-        results.last_seq = res.last_seq;
-        // For each change
-        var req = {};
-        req.query = opts.query_params;
-        res.results = res.results.filter(function (c) {
-          var ret = filterChange(opts)(c);
-          if (ret) {
-            if (opts.include_docs && opts.attachments && opts.binary) {
-              readAttachmentsAsBlobOrBuffer(c);
-            }
-            /*if (returnDocs) {
-              results.results.push(c);
-            }*/
-            opts.onChange(c);
+        self.socket_interval = window.setInterval(function() {
+          if (opts.aborted) return close_ws();
+          if (!self.socket_batch) return;
+
+          var batch = self.socket_batch.splice(0, batchSize);
+          if (batch.length > 0) {
+            var res = {
+              results: batch,
+              last_seq: batch.slice(-1)[0].seq
+            };
+            callback(null, res);
           }
-          return ret;
-        });
-      } else if (err) {
-        // In case of an error, stop listening for changes and call
-        // opts.complete
-        opts.aborted = true;
-        opts.complete(err);
-        return;
+        }, 500);
       }
-    };
-
-    fetch(opts.since || 0, fetched);
-
-    // Return a method to cancel this method from processing any more
-    return {
-      cancel: function () {
-        opts.aborted = true;
-        close_ws();
-      }
-    };
+    } catch(e) {
+      console.error('ERROR AT WEBSOCKET', e);
+    }
   };
-  /*
-  END END END END END END END END END END END END END END END END END END END END
-  */
+
+  // If opts.since exists, get all the changes from the sequence
+  // number given by opts.since. Otherwise, get all the changes
+  // from the sequence number 0.
+  var results = {results: []};
+
+  var fetched = function (err, res) {
+    if (opts.aborted) {
+      return;
+    }
+    var raw_results_length = 0;
+    // If the result of the ajax call (res) contains changes (res.results)
+    if (res && res.results) {
+      raw_results_length = res.results.length;
+      results.last_seq = res.last_seq;
+      // For each change
+      var req = {};
+      req.query = opts.query_params;
+      res.results = res.results.filter(function (c) {
+        var ret = filterChange(opts)(c);
+        if (ret) {
+          if (opts.include_docs && opts.attachments && opts.binary) {
+            readAttachmentsAsBlobOrBuffer(c);
+          }
+          /*if (returnDocs) {
+            results.results.push(c);
+          }*/
+          opts.onChange(c);
+        }
+        return ret;
+      });
+    } else if (err) {
+      // In case of an error, stop listening for changes and call
+      // opts.complete
+      opts.aborted = true;
+      opts.complete(err);
+      return;
+    }
+  };
+
+  fetch(opts.since || 0, fetched);
+
+  // Return a method to cancel this method from processing any more
+  return {
+    cancel: function () {
+      opts.aborted = true;
+      close_ws();
+    }
+  };
+};
+/*
+END END END END END END END END END END END END END END END END END END END END
+*/
 
   // Given a set of document/revision IDs (given by req), tets the subset of
   // those that do NOT correspond to revisions stored in the database.
@@ -1253,11 +1293,10 @@ function HttpPouch(opts, callback) {
     }
 
     // Get the missing document/revision IDs
-    ajax(opts, {
+    fetchJSON(genDBUrl(host, '_revs_diff'), {
       method: 'POST',
-      url: genDBUrl(host, '_revs_diff'),
-      body: req
-    }, callback);
+      body: JSON.stringify(req)
+    }, callback).catch(callback);
   });
 
   api._close = function (callback) {
@@ -1265,14 +1304,15 @@ function HttpPouch(opts, callback) {
   };
 
   api._destroy = function (options, callback) {
-    ajax(options, {
-      url: genDBUrl(host, ''),
-      method: 'DELETE'
-    }, function (err, resp) {
-      if (err && err.status && err.status !== 404) {
-        return callback(err);
+    fetchJSON(genDBUrl(host, ''), {method: 'DELETE'}).then(function (json) {
+      callback(null, json);
+    }).catch(function (err) {
+      /* istanbul ignore if */
+      if (err.status === 404) {
+        callback(null, {ok: true});
+      } else {
+        callback(err);
       }
-      callback(null, resp);
     });
   };
 }
@@ -1285,7 +1325,7 @@ HttpPouch.valid = function () {
 /*
 CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE
 */
-  return HttpPouch;
+return HttpPouch;
 }
 /*
 END END END END END END END END END END END END END END END END END END END END END

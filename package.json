@@ -24,6 +24,7 @@
   "scripts": {},
   "dependencies": {
     "pouchdb-ajax": "^6.4.1",
+    "pouchdb-fetch": "^7.0.0",
     "pouchdb-utils": "6.4.1"
   },
   "devDependencies": {
