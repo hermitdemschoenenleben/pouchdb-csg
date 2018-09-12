@@ -190,23 +190,16 @@ function HttpPouch(opts, callback) {
         return fallback();
       }
 
-      console.debug('Fetch Bulk Get?!', url, opts);
       return new Promise(function(resolve, reject) {
         multipartProvider(
           opts.method,
           url,
           opts.headers,
           opts.body
-        ).then(function(result) {
-          console.debug('result', result);
-          // FIXME: transformation missing
-          console.error('ignoring multipart result, transformation missing!');
-          return fallback();
-        }).catch(function(e) {
-          console.debug('error at multipart', e);
+        )
+        .catch(function(e) {
           return fallback();
         }).catch(function(err) {
-          console.debug('err', err);
           reject(err);
         }).then(function(result) {
           resolve(result);
