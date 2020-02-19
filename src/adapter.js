@@ -176,40 +176,40 @@ function HttpPouch(opts, callback) {
   /*
   CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE
   */
-  var originalFetch = (opts || {}).fetch;
+ var originalFetch = (opts || {}).fetch;
 
-  opts = Object.assign({}, opts || {}, {
-    fetch: function (url, opts) {
-      var fallback = function() {
-        opts.fetch = originalFetch;
-        return PouchDB.fetch(url, opts);
-      };
+ opts = Object.assign({}, opts || {}, {
+   fetch: function (url, opts) {
+     var fallback = function() {
+       opts.fetch = originalFetch;
+       return PouchDB.fetch(url, opts);
+     };
 
-      if (url.indexOf('/_bulk_get?') === -1) {
-        // not a bulk get request
-        return fallback();
-      }
+     if (url.indexOf('/_bulk_get?') === -1) {
+       // not a bulk get request
+       return fallback();
+     }
 
-      return new Promise(function(resolve, reject) {
-        multipartProvider(
-          opts.method,
-          url,
-          opts.headers,
-          opts.body
-        )
-        .catch(function(e) {
-          return fallback();
-        }).catch(function(err) {
-          reject(err);
-        }).then(function(result) {
-          resolve(result);
-        });
-      });
-    },
-  });
-  /*
-  END END END END END END END END END END END END END END END END END END
-  */
+     return new Promise(function(resolve, reject) {
+       multipartProvider(
+         opts.method,
+         url,
+         opts.headers,
+         opts.body
+       )
+       .catch(function(e) {
+         return fallback();
+       }).catch(function(err) {
+         reject(err);
+       }).then(function(result) {
+         resolve(result);
+       });
+     });
+   },
+ });
+ /*
+ END END END END END END END END END END END END END END END END END END
+ */
 
   // The functions that will be publicly available for HttpPouch
   var api = this;
@@ -359,12 +359,13 @@ function HttpPouch(opts, callback) {
   api.id = adapterFun('id', function (callback) {
     ourFetch(genUrl(host, '')).then(function (response) {
       return response.json();
+    }).catch(function () {
+      return {};
     }).then(function (result) {
+      // Bad response or missing `uuid` should not prevent ID generation.
       var uuid = (result && result.uuid) ?
           (result.uuid + host.db) : genDBUrl(host, '');
       callback(null, uuid);
-    }).catch(function (err) {
-      callback(err);
     });
   });
 
@@ -410,7 +411,6 @@ function HttpPouch(opts, callback) {
       if (opts.latest) {
         params.latest = true;
       }
-
       fetchJSON(genDBUrl(host, '_bulk_get' + paramsToStr(params)), {
         method: 'POST',
         body: JSON.stringify({ docs: opts.docs})
@@ -494,7 +494,10 @@ function HttpPouch(opts, callback) {
 
   api.fetch = function (path, options) {
     return setup().then(function () {
-      return ourFetch(genDBUrl(host, path), options);
+      var url = path.substring(0, 1) === '/' ?
+        genUrl(host, path.substring(1)) :
+        genDBUrl(host, path);
+      return ourFetch(url, options);
     });
   };
 
@@ -561,7 +564,7 @@ function HttpPouch(opts, callback) {
         var path = encodeDocId(doc._id) + '/' + encodeAttachmentId(filename) +
             '?rev=' + doc._rev;
         return ourFetch(genDBUrl(host, path)).then(function (response) {
-          if (typeof process !== 'undefined' && !process.browser) {
+          if ('buffer' in response) {
             return response.buffer();
           } else {
             /* istanbul ignore next */
@@ -569,8 +572,8 @@ function HttpPouch(opts, callback) {
           }
         }).then(function (blob) {
           if (opts.binary) {
-            // TODO: Can we remove this?
-            if (typeof process !== 'undefined' && !process.browser) {
+            var typeFieldDescriptor = Object.getOwnPropertyDescriptor(blob.__proto__, 'type');
+            if (!typeFieldDescriptor || typeFieldDescriptor.set) {
               blob.type = att.content_type;
             }
             return blob;
@@ -674,7 +677,7 @@ function HttpPouch(opts, callback) {
       if (!response.ok) {
         throw response;
       } else {
-        if (typeof process !== 'undefined' && !process.browser) {
+        if (typeof process !== 'undefined' && !process.browser && typeof response.buffer === 'function') {
           return response.buffer();
         } else {
           /* istanbul ignore next */
@@ -1128,8 +1131,7 @@ function HttpPouch(opts, callback) {
       }
     };
   };
-
-  /*
+/*
   CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE
   */
  api._continuous_changes_over_websockets = function (opts) {
