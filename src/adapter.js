@@ -36,7 +36,7 @@ import {
   blobOrBufferToBase64 as blufferToBase64
 } from 'pouchdb-binary-utils';
 
-export default function CSGAdapter(multipartProvider) {
+export default function CSGAdapter(multipartProvider, extraOptions) {
 
 
   // this allows to skip documents that are already deleted or removed
@@ -1166,7 +1166,12 @@ function HttpPouch(opts, callback) {
           feed: 'websocket'
         })).replace('http', 'ws');
 
-        var conn = new WebSocket(url);
+        var wsProtocol = [];
+        if (extraOptions && extraOptions.wsProtocol) {
+          wsProtocol.push(extraOptions.wsProtocol);
+        }
+        console.log('setting websocket protocol version', wsProtocol);
+        var conn = new WebSocket(url, wsProtocol);
         self.socket = conn;
 
         conn.onopen = function() {
