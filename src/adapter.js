@@ -1177,6 +1177,7 @@ function HttpPouch(opts, callback) {
         conn.onopen = function() {
           var data = {
             since: since,
+            heartbeat: 60000
           };
 
           if (ACTIVE_ONLY) {
