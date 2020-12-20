@@ -1180,13 +1180,14 @@ function HttpPouch(opts, callback) {
             heartbeat: 60000
           };
 
-          if (ACTIVE_ONLY) {
-            data.active_only = true
-          }
-
+          /*
           if (opts.style) {
             data.style = opts.style;
-          }
+          }*/
+          // we force style=main_only because we are not interested in non-winning
+          // revisions
+          data.style = 'main_only';
+
           conn.send(JSON.stringify(data));
         };
         conn.onmessage = function(msg) {
