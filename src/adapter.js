@@ -38,15 +38,6 @@ import {
 
 export default function CSGAdapter(multipartProvider, extraOptions) {
 
-
-  // this allows to skip documents that are already deleted or removed
-  // from channels such they don't have to be replicated initially
-  // this is analogous to the behavior of CB Lite
-  // in contrast to CB Lite, we also do it on continuous replication
-  // the reason for this is that we want to be able to remove a document
-  // (i.e. a message) from the user's channel, but keep it existent locally
-  var ACTIVE_ONLY = true;
-
   /*
   END END END END END END END END END END END END END END END END END END END END
   */
@@ -916,19 +907,6 @@ function HttpPouch(opts, callback) {
     var limit = (typeof opts.limit !== 'undefined') ? opts.limit : false;
     var leftToFetch = limit;
 
-    /*
-    CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE
-    */
-    // this allows to skip documents that are already deleted or removed
-    // from channels such they don't have to be replicated initially
-    // this is analogous to the behavior of CB Lite
-    if (ACTIVE_ONLY) {
-      console.info('fetching active_only documents')
-      params.active_only = true;
-    }
-    /*
-    END END END END END END END END END END END END END END END END END END END
-    */
 
     if (opts.style) {
       params.style = opts.style;
