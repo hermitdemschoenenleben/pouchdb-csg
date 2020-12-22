@@ -3,8 +3,6 @@
 /*
 CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE
 */
-import {getXHR, setXHROption} from './utils/xhr';
-
 import getArguments from 'argsarray';
 import pool from './promise-pool';
 
