@@ -27,6 +27,6 @@
     "pouchdb-utils": "7.2.2"
   },
   "devDependencies": {
-    "pouchdb": "^7.2.2",
+    "pouchdb": "^7.2.2"
   }
 }
