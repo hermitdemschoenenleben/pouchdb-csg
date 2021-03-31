@@ -1174,6 +1174,12 @@ function HttpPouch(opts, callback) {
           } catch(e) {
             return;
           }
+
+          var callbackAlive = window.callbackWebsocketAlive;
+          if (callbackAlive) {
+            callbackAlive();
+          }
+
           if (data.length == 0) {
             return;
           }
