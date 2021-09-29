@@ -3,6 +3,8 @@
 /*
 CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE
 */
+console.log('using pouchdb-csg 29-09-2021');
+
 import getArguments from 'argsarray';
 import pool from './promise-pool';
 
@@ -1209,6 +1211,11 @@ function HttpPouch(opts, callback) {
         }, 500);
       }
     } catch(e) {
+      console.log('websocket error: ' + JSON.stringify(e));
+      console.log(e);
+      if (window.sentryCaptureMessage) {
+        window.sentryCaptureMessage('error at websocket' + e);
+      }
       console.error('ERROR AT WEBSOCKET', e);
     }
   };
