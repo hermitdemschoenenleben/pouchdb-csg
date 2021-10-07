@@ -1213,10 +1213,14 @@ function HttpPouch(opts, callback) {
     } catch(e) {
       console.log('websocket error: ' + JSON.stringify(e));
       console.log(e);
-      if (window.sentryCaptureMessage) {
+      if (window.sentryCaptureMessage && !window.websocketErrorCaptured) {
         window.sentryCaptureMessage('error at websocket' + e);
+        window.websocketErrorCaptured = true;
       }
-      console.error('ERROR AT WEBSOCKET', e);
+      console.error('error at websocket', e);
+
+      // this causes a retry after a few seconds. Sync still works.
+      throw e;
     }
   };
 
