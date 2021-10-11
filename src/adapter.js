@@ -3,7 +3,7 @@
 /*
 CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE
 */
-console.log('using pouchdb-csg 29-09-2021');
+console.log('using pouchdb-csg 11-10-2021');
 
 import getArguments from 'argsarray';
 import pool from './promise-pool';
