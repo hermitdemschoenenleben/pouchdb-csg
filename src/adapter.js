@@ -875,7 +875,20 @@ function HttpPouch(opts, callback) {
     CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE CHANGE
     */
     if (opts.continuous) {
-      return api._continuous_changes_over_websockets(opts);
+      try {
+        return api._continuous_changes_over_websockets(opts);
+      } catch(e) {
+        // if websockets don't work, use default pouchdb behavior
+        // this relies on longpoll requests (featuring
+        // more sophisticated error handling)
+        console.log('websocket error: ' + JSON.stringify(e));
+        console.log(e);
+        if (window.sentryCaptureMessage && !window.websocketErrorCaptured) {
+          window.sentryCaptureMessage('error at websocket, falling back to longpoll' + e);
+          window.websocketErrorCaptured = true;
+        }
+        console.error('error at websocket', e);
+      }
     }
     /*
     END END END END END END END END END END END END END END END END END END END
@@ -1138,89 +1151,76 @@ function HttpPouch(opts, callback) {
       return;
     }
 
-    try {
-      if (!self.socket) {
-        var url = genDBUrl(host, '_changes' + paramsToStr({
-          feed: 'websocket'
-        })).replace('http', 'ws');
+    if (!self.socket) {
+      var url = genDBUrl(host, '_changes' + paramsToStr({
+        feed: 'websocket'
+      })).replace('http', 'ws');
 
-        var wsProtocol = [];
-        if (extraOptions && extraOptions.wsProtocol) {
-          wsProtocol.push(extraOptions.wsProtocol);
-        }
-        console.log('setting websocket protocol version', wsProtocol);
-        var conn = new WebSocket(url, wsProtocol);
-        self.socket = conn;
+      var wsProtocol = [];
+      if (extraOptions && extraOptions.wsProtocol) {
+        wsProtocol.push(extraOptions.wsProtocol);
+      }
+      console.log('setting websocket protocol version', wsProtocol);
+      var conn = new WebSocket(url, wsProtocol);
+      self.socket = conn;
 
-        conn.onopen = function() {
-          var data = {
-            since: since,
-            heartbeat: 60000
-          };
-
-          /*
-          if (opts.style) {
-            data.style = opts.style;
-          }*/
-          // we force style=main_only because we are not interested in non-winning
-          // revisions
-          data.style = 'main_only';
-
-          conn.send(JSON.stringify(data));
+      conn.onopen = function() {
+        var data = {
+          since: since,
+          heartbeat: 60000
         };
-        conn.onmessage = function(msg) {
-          if (!self.socket_batch) { self.socket_batch = []; };
-          var data;
-          try {
-            data = JSON.parse(msg.data);
-          } catch(e) {
-            return;
-          }
 
-          var callbackAlive = window.callbackWebsocketAlive;
-          if (callbackAlive) {
-            callbackAlive();
-          }
+        /*
+        if (opts.style) {
+          data.style = opts.style;
+        }*/
+        // we force style=main_only because we are not interested in non-winning
+        // revisions
+        data.style = 'main_only';
 
-          if (data.length == 0) {
-            return;
-          }
-
-          self.socket_batch = self.socket_batch.concat(data);
+        conn.send(JSON.stringify(data));
+      };
+      conn.onmessage = function(msg) {
+        if (!self.socket_batch) { self.socket_batch = []; };
+        var data;
+        try {
+          data = JSON.parse(msg.data);
+        } catch(e) {
+          return;
         }
 
-        var handle_error = function(err) {
-          close_ws();
-          callback(err, null);
+        var callbackAlive = window.callbackWebsocketAlive;
+        if (callbackAlive) {
+          callbackAlive();
         }
-        conn.onerror = handle_error;
-        conn.onclose = handle_error;
 
-        self.socket_interval = window.setInterval(function() {
-          if (opts.aborted) return close_ws();
-          if (!self.socket_batch) return;
+        if (data.length == 0) {
+          return;
+        }
 
-          var batch = self.socket_batch.splice(0, batchSize);
-          if (batch.length > 0) {
-            var res = {
-              results: batch,
-              last_seq: batch.slice(-1)[0].seq
-            };
-            callback(null, res);
-          }
-        }, 500);
+        self.socket_batch = self.socket_batch.concat(data);
       }
-    } catch(e) {
-      console.log('websocket error: ' + JSON.stringify(e));
-      console.log(e);
-      if (window.sentryCaptureMessage && !window.websocketErrorCaptured) {
-        window.sentryCaptureMessage('error at websocket' + e);
-        window.websocketErrorCaptured = true;
-      }
-      console.error('error at websocket', e);
 
-      // this causes a retry after a few seconds. Sync still works.
-      throw e;
+      var handle_error = function(err) {
+        close_ws();
+        callback(err, null);
+      }
+      conn.onerror = handle_error;
+      conn.onclose = handle_error;
+
+      self.socket_interval = window.setInterval(function() {
+        if (opts.aborted) return close_ws();
+        if (!self.socket_batch) return;
+
+        var batch = self.socket_batch.splice(0, batchSize);
+        if (batch.length > 0) {
+          var res = {
+            results: batch,
+            last_seq: batch.slice(-1)[0].seq
+          };
+          callback(null, res);
+        }
+      }, 500);
     }
   };
 
