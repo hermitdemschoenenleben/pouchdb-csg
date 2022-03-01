@@ -1160,7 +1160,7 @@ function HttpPouch(opts, callback) {
       if (extraOptions && extraOptions.wsProtocol) {
         wsProtocol.push(extraOptions.wsProtocol);
       }
-      console.log('setting websocket protocol version', wsProtocol);
+      console.log('connecting websocket to sync gateway changes feed');
       var conn = new WebSocket(url, wsProtocol);
       self.socket = conn;
 
