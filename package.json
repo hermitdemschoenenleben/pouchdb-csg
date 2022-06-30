@@ -22,11 +22,6 @@
     "url": "https://github.com/hermitdemschoenenleben/pouchdb-csg/issues"
   },
   "scripts": {},
-  "dependencies": {
-    "pouchdb-fetch": "^7.2.2",
-    "pouchdb-utils": "7.2.2"
-  },
-  "devDependencies": {
-    "pouchdb": "^7.2.2"
-  }
+  "dependencies": {},
+  "devDependencies": {}
 }
