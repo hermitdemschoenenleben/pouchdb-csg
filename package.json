@@ -26,9 +26,9 @@
     "argsarray": "^0.0.1"
   },
   "peerDependencies": {
-    "pouchdb-errors": "^7.0.0-prerelease",
-    "pouchdb-utils": "^7.0.0-prerelease",
-    "pouchdb-binary-utils": "^7.0.0-prerelease",
-    "pouchdb-fetch": "^7.0.0-prerelease"
+    "pouchdb-errors": "7.0.0-blindmate",
+    "pouchdb-utils": "7.0.0-blindmate",
+    "pouchdb-binary-utils": "7.0.0-blindmate",
+    "pouchdb-fetch": "7.0.0-blindmate"
   }
 }
