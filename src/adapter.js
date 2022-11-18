@@ -1220,7 +1220,7 @@ function HttpPouch(opts, callback) {
           };
           callback(null, res);
         }
-      }, 500);
+      }, 100);
     }
   };
 
