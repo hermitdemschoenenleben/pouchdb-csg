@@ -1133,8 +1133,8 @@ function HttpPouch(opts, callback) {
       self.socket.close()
     } catch(e) {};
     try {
-      window.clearInterval(self.socket_interval);
-      self.socket_interval = undefined;
+      window.clearTimeout(self.socket_batch_timeout);
+      self.socket_batch_timeout = undefined;
     } catch(e) {}
     self.socket = undefined;
   }
@@ -1180,6 +1180,31 @@ function HttpPouch(opts, callback) {
 
         conn.send(JSON.stringify(data));
       };
+
+      var emitBatch = function() {
+        self.socket_batch_timeout = undefined;
+
+        if (opts.aborted) return close_ws();
+        if (!self.socket_batch) return;
+
+        var batch = self.socket_batch.splice(0, batchSize);
+        if (batch.length > 0) {
+          var res = {
+            results: batch,
+            last_seq: batch.slice(-1)[0].seq
+          };
+          callback(null, res);
+        }
+
+        if (self.socket_batch.length > 0) scheduleEmitBatch();
+      };
+
+      var scheduleEmitBatch = function() {
+        if (!self.socket_batch_timeout) {
+          self.socket_batch_timeout = window.setTimeout(emitBatch, 100);
+        }
+      };
+
       conn.onmessage = function(msg) {
         if (!self.socket_batch) { self.socket_batch = []; };
         var data;
@@ -1199,6 +1224,8 @@ function HttpPouch(opts, callback) {
         }
 
         self.socket_batch = self.socket_batch.concat(data);
+
+        scheduleEmitBatch();
       }
 
       var handle_error = function(err) {
@@ -1207,20 +1234,6 @@ function HttpPouch(opts, callback) {
       }
       conn.onerror = handle_error;
       conn.onclose = handle_error;
-
-      self.socket_interval = window.setInterval(function() {
-        if (opts.aborted) return close_ws();
-        if (!self.socket_batch) return;
-
-        var batch = self.socket_batch.splice(0, batchSize);
-        if (batch.length > 0) {
-          var res = {
-            results: batch,
-            last_seq: batch.slice(-1)[0].seq
-          };
-          callback(null, res);
-        }
-      }, 100);
     }
   };
 
